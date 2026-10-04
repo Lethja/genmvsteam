@@ -147,11 +147,70 @@ mkdir_already_covered() {
 	return 1
 }
 
+print_script_command() {
+	printf '%q' "$1"
+	shift
+	printf ' %q' "$@"
+	printf '\n'
+}
+
+flush_pending_mv() {
+	if [ "${#pending_mv_sources[@]}" -eq 0 ]; then
+		return 0
+	fi
+
+	if [ "${#pending_mv_sources[@]}" -eq 1 ]; then
+		print_script_command mv -v -- "${pending_mv_sources[0]}" "${pending_mv_targets[0]}"
+	else
+		print_script_command mv -v -- "${pending_mv_sources[@]}" "$pending_mv_dir/"
+	fi
+
+	pending_mv_sources=()
+	pending_mv_targets=()
+	pending_mv_dir=""
+}
+
+queue_or_print_mv() {
+	local source=$1
+	local target=$2
+	local target_dir
+	local source_base
+	local target_base
+
+	target_dir=$(dirname "$target")
+	source_base=$(basename "$source")
+	target_base=$(basename "$target")
+
+	# Only batch moves that preserve the source basename.
+	# That means:
+	#
+	#   /a/file1 -> /b/file1
+	#   /a/file2 -> /b/file2
+	#
+	# can become:
+	#
+	#   mv -- /a/file1 /a/file2 /b/
+	#
+	if [ "$source_base" != "$target_base" ]; then
+		flush_pending_mv
+		print_script_command mv -v -- "$source" "$target"
+		return 0
+	fi
+
+	if [ -n "$pending_mv_dir" ] && [ "$pending_mv_dir" != "$target_dir" ]; then
+		flush_pending_mv
+	fi
+
+	pending_mv_dir=$target_dir
+	pending_mv_sources+=("$source")
+	pending_mv_targets+=("$target")
+}
+
 # Prevent destructive behaviour from user input error, never accept a destination directory we are not completely sure came from a Steam library path.
 destination=$(realpath "${@: -1}")
 if [ ! -d "$destination" ] || [ ! -d "$destination/common" ]; then printf "Warning: \'%s\' does not look like a 'steamapps' directory.\n" "$destination" >&2; exit 1; fi
 
-printf "#!/bin/bash\n\nset -e\n\n# The following games will be moved to '%s':\n" "$destination/common"
+printf "#!/bin/bash\n\nset -e\nset -x\n\n# The following games will be moved to '%s':\n" "$destination/common"
 
 for arg in "${@:1:(($#-1))}"; do
 	source_game=$(realpath "$arg")
@@ -206,7 +265,11 @@ done
 declare -A printed_mkdirs=()
 
 for game_key in "${game_keys[@]}"; do
-	printf "\n# %s\n" "$game_key"
+	printf '\n# %s\n' "$game_key"
+
+	pending_mv_sources=()
+	pending_mv_targets=()
+	pending_mv_dir=""
 
 	while IFS=$'\t' read -r source target; do
 		if [ -z "$source" ]; then continue; fi
@@ -214,10 +277,13 @@ for game_key in "${game_keys[@]}"; do
 		target_dir=$(dirname "$target")
 
 		if ! mkdir_already_covered "$target_dir"; then
-			printf "mkdir -p -- '%s'\n" "$target_dir"
+			flush_pending_mv
+			print_script_command mkdir -p -- "$target_dir"
 			printed_mkdirs["$target_dir"]=1
 		fi
 
-		printf "mv -v -- '%s' '%s'\n" "$source" "$target"
+		queue_or_print_mv "$source" "$target"
 	done <<< "${moves_by_game[$game_key]}"
+
+	flush_pending_mv
 done
