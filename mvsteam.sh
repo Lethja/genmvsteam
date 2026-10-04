@@ -233,7 +233,7 @@ for arg in "${@:1:(($#-1))}"; do
 
 	add_game_group "$game_key"
 
-	printf "# \t'%s' (id: %s)\n" "$source_game" "$(join_by ', ' "${ids[@]}")"
+	printf "#\t'%s' (%s)\n" "$source_game" "$(join_by ', ' "${ids[@]}")"
 
 	# 1. Main game folder first.
 	add_game_move "$game_key" "$source_game" "$destination/common/$game_name"
