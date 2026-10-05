@@ -208,7 +208,7 @@ queue_or_print_mv() {
 
 # Prevent destructive behaviour from user input error, never accept a destination directory we are not completely sure came from a Steam library path.
 destination=$(realpath "${@: -1}")
-if [ ! -d "$destination" ] || [ ! -d "$destination/common" ]; then printf "Warning: \'%s\' does not look like a 'steamapps' directory.\n" "$destination" >&2; exit 1; fi
+if [ ! -d "$destination" ] || [ ! -d "$destination/common" ]; then printf "Error: \'%s\' does not look like a 'steamapps' directory.\n" "${@: -1}" >&2; exit 1; fi
 
 printf "#!/bin/bash\n\nset -e\nset -x\n\n# The following games will be moved to '%s':\n" "$destination/common"
 
