@@ -160,9 +160,9 @@ flush_pending_mv() {
 	fi
 
 	if [ "${#pending_mv_sources[@]}" -eq 1 ]; then
-		print_script_command mv -v -- "${pending_mv_sources[0]}" "${pending_mv_targets[0]}"
+		print_script_command mv -nv -- "${pending_mv_sources[0]}" "${pending_mv_targets[0]}"
 	else
-		print_script_command mv -v -- "${pending_mv_sources[@]}" "$pending_mv_dir/"
+		print_script_command mv -nv -- "${pending_mv_sources[@]}" "$pending_mv_dir/"
 	fi
 
 	pending_mv_sources=()
@@ -193,7 +193,7 @@ queue_or_print_mv() {
 	#
 	if [ "$source_base" != "$target_base" ]; then
 		flush_pending_mv
-		print_script_command mv -v -- "$source" "$target"
+		print_script_command mv -nv -- "$source" "$target"
 		return 0
 	fi
 
@@ -206,21 +206,37 @@ queue_or_print_mv() {
 	pending_mv_targets+=("$target")
 }
 
-# Prevent destructive behaviour from user input error, never accept a destination directory we are not completely sure came from a Steam library path.
-destination=$(realpath "${@: -1}")
-if [ ! -d "$destination" ] || [ ! -d "$destination/common" ]; then printf "Error: \'%s\' does not look like a 'steamapps' directory.\n" "${@: -1}" >&2; exit 1; fi
+validate_game_path() {
+	local arg=$1
 
-printf "#!/bin/bash\n\nset -e\nset -x\n\n# The following games will be moved to '%s':\n" "$destination/common"
+	if [ ! -d "$arg" ]; then
+		return 1
+	fi
 
-for arg in "${@:1:(($#-1))}"; do
 	source_game=$(realpath "$arg")
 	source_common=$(realpath "$source_game/..")
 	source_steamapps=$(realpath "$source_common/..")
 
-	# Prevent destructive behaviour from user input error, never manipulate a source directory
-	# we are not completely sure is a direct child of a Steam common directory.
-	if [ ! -d "$source_game" ] || [ "$(basename "$source_common")" != "common" ] || [ ! -d "$source_steamapps/common" ]; then
-		printf "Warning: '%s' does not look like a Steam game in a common directory.\n" "$arg" >&2
+	if [ "$(basename "$source_common")" != "common" ]; then
+		return 1
+	fi
+
+	if [ ! -d "$source_steamapps/common" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+# Prevent destructive behaviour from user input error, never accept a destination directory we are not completely sure came from a Steam library path.
+destination=$(realpath "${@: -1}")
+if [ ! -d "$destination" ] || [ ! -d "$destination/common" ]; then printf "Error: destination \'%s\' does not look like a 'steamapps' directory.\n" "${@: -1}" >&2; exit 1; fi
+
+header=false
+
+for arg in "${@:1:(($#-1))}"; do
+	if ! validate_game_path "$arg"; then
+		printf "# Warning: source '%s' does not look like a Steam game in a 'steamapps/common' directory.\n" "$arg" >&2
 		continue
 	fi
 
@@ -233,6 +249,7 @@ for arg in "${@:1:(($#-1))}"; do
 
 	add_game_group "$game_key"
 
+	if ! $header; then printf "#!/bin/bash\n\n# The following games will be moved to '%s':\n" "$destination/common"; header=true; fi
 	printf "#\t'%s' (%s)\n" "$source_game" "$(join_by ', ' "${ids[@]}")"
 
 	# 1. Main game folder first.
@@ -241,7 +258,7 @@ for arg in "${@:1:(($#-1))}"; do
 	# 2. Additional per-app data next.
 	for path in "${additional_paths[@]}"; do
 		target=$(target_for_steamapps_path "$source_steamapps" "$destination" "$path") || {
-			printf "Warning: refusing unexpected Steam path '%s'\n" "$path" >&2
+			printf "# Warning: refusing unexpected Steam path '%s'\n" "$path" >&2
 			continue
 		}
 
@@ -254,7 +271,7 @@ for arg in "${@:1:(($#-1))}"; do
 	# install complete before the payload data has arrived.
 	for metafile in "${metafiles[@]}"; do
 		target=$(target_for_steamapps_path "$source_steamapps" "$destination" "$metafile") || {
-			printf "Warning: refusing unexpected manifest path '%s'\n" "$metafile" >&2
+			printf "# Warning: refusing unexpected manifest path '%s'\n" "$metafile" >&2
 			continue
 		}
 
@@ -262,7 +279,10 @@ for arg in "${@:1:(($#-1))}"; do
 	done
 done
 
+if [ "${#game_keys[@]}" -eq 0 ]; then printf "Error: no Steam games sources to move.\n" >&2; exit 1; fi
+
 declare -A printed_mkdirs=()
+printf "\nset -e\nset -x\n"
 
 for game_key in "${game_keys[@]}"; do
 	printf '\n# %s\n' "$game_key"
