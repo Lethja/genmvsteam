@@ -160,9 +160,9 @@ flush_pending_mv() {
 	fi
 
 	if [ "${#pending_mv_sources[@]}" -eq 1 ]; then
-		print_script_command mv -nv -- "${pending_mv_sources[0]}" "${pending_mv_targets[0]}"
+		print_script_command process_existing "${pending_mv_sources[0]}" "${pending_mv_targets[0]}"
 	else
-		print_script_command mv -nv -- "${pending_mv_sources[@]}" "$pending_mv_dir/"
+		print_script_command process_existing "${pending_mv_sources[@]}" "$pending_mv_dir/"
 	fi
 
 	pending_mv_sources=()
@@ -193,7 +193,7 @@ queue_or_print_mv() {
 	#
 	if [ "$source_base" != "$target_base" ]; then
 		flush_pending_mv
-		print_script_command mv -nv -- "$source" "$target"
+		print_script_command process_existing "$source" "$target"
 		return 0
 	fi
 
@@ -282,7 +282,25 @@ done
 if [ "${#game_keys[@]}" -eq 0 ]; then printf "Error: no Steam games sources to move.\n" >&2; exit 1; fi
 
 declare -A printed_mkdirs=()
-printf "\nset -e\nset -x\n"
+cat <<'EOF'
+
+set -e # Halt on any error
+
+process_existing() {
+	local target=${@: -1} sources=() source actual
+
+	for source in "${@:1:$(($#-1))}"; do
+		if [[ ! -e "$source" && ! -L "$source" ]]; then printf "skipped '%s'\n" "$source" >&2; continue; fi
+		if [[ "$source" == "$target" ]]; then printf "skipped '%s'\n" "$source" >&2; continue; fi
+		if [ -d "$target" ]; then actual="${target%/}/$(basename "$source")"; else actual="$target"; fi
+		if [[ "$source" == "$actual" || "$actual" == "$source"/* ]]; then printf "skipped '%s'\n" "$source" >&2; continue; fi
+		sources+=("$source")
+	done
+
+	if [ "${#sources[@]}" -eq 0 ]; then return 0; fi
+	mv -nv -- "${sources[@]}" "$target"
+}
+EOF
 
 for game_key in "${game_keys[@]}"; do
 	printf '\n# %s\n' "$game_key"
